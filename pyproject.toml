@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qserve"
+version = "0.1.0"
+description = "Efficient and accurate LLM serving system with W4A8KV4 quantization."
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+]
+dependencies = [
+    "accelerate", "sentencepiece", "tokenizers>=0.12.1",
+    "torch>=2.0.0", "torchvision", 
+    "transformers==4.37.2", "datasets",
+    "lm_eval==0.3.0", "texttable",
+    "toml", "attributedict",
+    "xformers",
+    "protobuf",
+    "gradio==3.35.2", "gradio_client==0.2.9",
+    "fastapi", "uvicorn",
+    "pydantic==1.10.14"
+]
+
+[tool.setuptools.packages.find]
+exclude = ["results*", "scripts*", "examples*"]
+
+[tool.wheel]
+exclude = ["results*", "scripts*", "examples*"]
