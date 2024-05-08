@@ -176,7 +176,7 @@ We also provide sample scripts in QServe.
 - End to end generation: `./scripts/run_e2e.sh`;
 - Speed benchmarking: `./scripts/benchmark/benchmark_a100.sh` or `./scripts/benchmark/benchmark_l40s.sh`.
 
-These scripts are expected to be executed in the QServe project folder (not in the `scripts` folder).
+These scripts are expected to be executed in the QServe project folder (not in the `scripts` folder). Please note that `git-lfs` is needed for downloading QServe benchmark config files from huggingface before running the benchmark scripts.
 
 ## Results
 
