@@ -376,6 +376,9 @@ class EngineArgs:
         if "kv4" in self.precision:
             self.kv_cache_bits = 4
             self.int4_kv = True
+        else:
+            self.kv_cache_bits = 8
+            self.int4_kv = False
         precision = self.precision
         self.kv_zp = True
 

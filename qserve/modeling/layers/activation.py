@@ -63,7 +63,7 @@ class SiluAndMulQuant(SiluAndMul):
         x: torch.Tensor,
         quantized_mlp_act_buffer: torch.Tensor,
         quantized_scale_buffer: torch.Tensor,
-        quantized_sum_buffer: torch.Tensor,
+        quantized_sum_buffer: torch.Tensor = None,
     ) -> torch.Tensor:
         # quantized_sum_buffer is not used, only to keep the consistency of the interface.
         out = super().forward(x)

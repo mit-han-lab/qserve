@@ -1,7 +1,7 @@
 import os
 import torch
 import argparse
-from qserve.modeling.layers.quantized_linear import W4A8OF16LinearDynamicInputScale
+from qserve.modeling.layers.quantized_linear import W4A8OF16LinearDynamicInputScale, W8A8OF16LinearDynamicInputScale
 from quant_utils import get_blocks, get_named_linears, scale_activations, set_op_by_name
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, modeling_utils
 from tqdm import tqdm
@@ -31,6 +31,12 @@ if __name__ == "__main__":
         type=str,
         default="/data/llama-2-7b-hf-fake-quant/",
         help="path to the fake quantized model dumped by LMQuant, including model.pt and scale.pt",
+    )
+    parser.add_argument(
+        "--w-bit",
+        type=int,
+        default=4,
+        help="bitwidth for weight quantization",
     )
     parser.add_argument(
         "--group-size",
@@ -67,8 +73,10 @@ if __name__ == "__main__":
     fake_quant_ckpt = torch.load(args.quant_path+'/model.pt', map_location=args.device)
     quant_params = torch.load(args.quant_path+'/scale.pt', map_location=args.device)
 
-    w_bit = 4
+    w_bit = args.w_bit
     q_config = {"zero_point": True, "q_group_size": args.group_size}
+    if w_bit == 8:
+        assert args.group_size == -1, "Group size should be -1 (per-channel) for W8 quantization"
 
     layers = get_blocks(model)
     for i in tqdm(
@@ -92,10 +100,15 @@ if __name__ == "__main__":
                 zeros = zeros + 8
             module.weight.data = fake_quant_ckpt[f"{layer_weight_name}.weight"]
             module = module.cpu()
-            
-            q_linear = W4A8OF16LinearDynamicInputScale.from_linear(
-                module, w_bit, q_config["q_group_size"], init_only=False, s1_scale=s1_scale, s2_scale=s2_scale, zeros=zeros
-            )
+
+            if w_bit == 4:    
+                q_linear = W4A8OF16LinearDynamicInputScale.from_linear(
+                    module, w_bit, q_config["q_group_size"], init_only=False, s1_scale=s1_scale, s2_scale=s2_scale, zeros=zeros
+                )
+            else:
+                q_linear = W8A8OF16LinearDynamicInputScale.from_linear(
+                    module, w_bit, init_only=False, s1_scale=s1_scale
+                )
             # q_linear.to(next(layer.parameters()).device)
             set_op_by_name(layer, name, q_linear)
     
@@ -110,7 +123,7 @@ if __name__ == "__main__":
 
     # Organize checkpoint and config files
     model_name = args.model_path.rstrip("/").split("/")[-1]
-    model_name = model_name + "-w4a8-per-channel" if args.group_size == -1 else model_name + f"-w4a8-g{args.group_size}"
+    model_name = model_name + f"-w{args.w_bit}a8-per-channel" if args.group_size == -1 else model_name + f"-w{args.w_bit}a8-g{args.group_size}"
     os.system(f"mkdir -p {args.output_path}/{model_name}")
     os.system(f"mv {args.output_path}/quant_model.pt {args.output_path}/{model_name}/pytorch_model.bin")
     os.system(f"scp {args.model_path}/*.json {args.output_path}/{model_name}")
