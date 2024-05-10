@@ -138,15 +138,19 @@ class LlamaAttention(nn.Module):
         else:
             self.kv_cache_config = kv_cache_config
 
+        if hasattr(args, "attention_bias"):
+            attention_bias = args.attention_bias
+        else:
+            attention_bias = False
         self.qkv_proj = W8A8OF16LinearDynamicInputScale(
             hidden_size,
             (self.total_num_heads + 2 * self.total_num_kv_heads * num_kv_heads_replicas)
             * self.head_dim,
-            bias=False,
+            bias=attention_bias,
         )
 
         self.o_proj = W8A8OF16LinearDynamicInputScale(
-            self.total_num_heads * self.head_dim, hidden_size, bias=False
+            self.total_num_heads * self.head_dim, hidden_size, bias=attention_bias
         )
 
         self.kv_max_seq_len = min(max_seq_len, self.max_position_embeddings)
@@ -185,16 +189,18 @@ class LlamaAttention(nn.Module):
                 self.num_kv_heads,
                 input_metadata.max_seq_len,
                 64,  # tokens_per_block
-                self.hidden_size
+                self.num_kv_heads
+                * self.head_dim
                 * (1 if self.use_int8 else 2)
                 // (2 if self.kv_cache_config["INT4_ENABLED"] else 1),
                 self.head_dim,
-                10000,
+                self.rope_theta,
                 self.max_position_embeddings,
                 True,  # neox style
                 self.kv_cache_config["INT4_ENABLED"],  # int4_kv
                 self.kv_cache_config["ZEROS_ENABLED"],  # kv_cache_with_zeros
             )
+
 
             # FIXME: currently qkv share same scale, plan to use seperate scales
             q, k, v = activation_buffer.qkv_proj_act_buffer.split(
@@ -230,12 +236,12 @@ class LlamaAttention(nn.Module):
             alibi_slopes = None
             memory_max_len = self.kv_max_seq_len
             tokens_per_block = 64
-            size_per_token = self.hidden_size * (
-                1 if self.use_int8 else 2
+            size_per_token = (
+                self.num_kv_heads * self.head_dim * (1 if self.use_int8 else 2)
             )  # size per token
             timestep = input_metadata.max_seq_len
             rotary_embedding_dim = self.head_dim
-            rotary_base = 10000
+            rotary_base = self.rope_theta
             neox_rotary_style = True
             # shape is (#tokens, #heads, head_dim)
             attn_output = fused_attention.single_query_attention(
