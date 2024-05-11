@@ -66,7 +66,7 @@ class RMSNormGeneral(nn.Module):
         x: torch.Tensor,
         quantized_hidden_states_buffer: torch.Tensor,
         quantized_scale_buffer: torch.Tensor,
-        quantized_sum_buffer: torch.Tensor,
+        quantized_sum_buffer: torch.Tensor = None,
     ) -> torch.Tensor:
         # quantized_sum_buffer is not used, only to keep the consistency of the interface
         layernorm_ops.rms_norm_general(

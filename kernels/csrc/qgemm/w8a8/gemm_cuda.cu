@@ -40,7 +40,6 @@
     printf("This kernel requires %d Bytes of shared memory, which exceeds "      \
            "device limit.\n",                                                    \
            kSmemByteSize);                                                       \
-    return _out_feats;                                                           \
   }                                                                              \
   int num_blocks_m = (num_out_feats + CTA_M - 1) / CTA_M;                        \
   int num_blocks_n = num_out_channels / CTA_N / 1;                               \
@@ -71,10 +70,11 @@ __inline__ __host__ __device__ int get_log_tile(int n)
     return 0;
 }
 
-torch::Tensor w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
+void w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
                                 torch::Tensor _kernel,
                                 torch::Tensor _wscales,
-                                torch::Tensor _ascales)
+                                torch::Tensor _ascales,
+                                torch::Tensor _out_feats)
 {
   int num_in_feats = _in_feats.size(0);
   int num_in_channels = _in_feats.size(1);
@@ -84,14 +84,12 @@ torch::Tensor w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
   auto wscales = reinterpret_cast<half2 *>(_wscales.data_ptr());
   auto ascales = reinterpret_cast<half *>(_ascales.data_ptr());
   // auto out_in_map = _out_in_map.data_ptr<int>();
-  auto options =
-      torch::TensorOptions().dtype(torch::kFloat16).device(_in_feats.device());
-  at::Tensor _out_feats =
-      torch::empty({num_in_feats, _kernel.size(0)}, options);
+  // auto options =
+  //     torch::TensorOptions().dtype(torch::kFloat16).device(_in_feats.device());
+  // at::Tensor _out_feats =
+  //     torch::empty({num_in_feats, _kernel.size(0)}, options);
   int num_out_feats = _out_feats.size(-2);
   int num_out_channels = _out_feats.size(-1);
-
-
   auto out_feats = reinterpret_cast<half *>(_out_feats.data_ptr<at::Half>());
 
   // blockIdx.x: i_factors[0] * j_factors[0]
@@ -122,6 +120,6 @@ torch::Tensor w8a8_gemm_forward_cuda(torch::Tensor _in_feats,
     KERNEL_LAUNCH_CODE
   }
   
-  return _out_feats;
+  // return _out_feats;
 }
 
