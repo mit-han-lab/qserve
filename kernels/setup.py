@@ -13,7 +13,7 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CUDA_HOME
 ROOT_DIR = os.path.dirname(__file__)
 
 # Supported NVIDIA GPU architectures.
-SUPPORTED_ARCHS = {"7.0", "7.5", "8.0", "8.6", "8.9", "9.0"}
+SUPPORTED_ARCHS = {"8.0", "8.6", "8.9", "9.0"}
 
 # Compiler flags.
 CXX_FLAGS = ["-g", "-O3", "-fopenmp", "-lgomp", "-std=c++17", "-DENABLE_BF16"]
@@ -97,27 +97,12 @@ if not compute_capabilities:
     # If TORCH_CUDA_ARCH_LIST is not defined or empty, target all available
     # GPUs on the current machine.
     device_count = torch.cuda.device_count()
-    gpu_version = None
     for i in range(device_count):
         major, minor = torch.cuda.get_device_capability(i)
-        if gpu_version is None:
-            gpu_version = f"{major}{minor}"
-        else:
-            if gpu_version != f"{major}{minor}":
-                raise RuntimeError(
-                    "Kernels for GPUs with different compute capabilities cannot be installed simultaneously right now.\nPlease use CUDA_VISIBLE_DEVICES to specify the GPU for installation."
-                )
         if major < 7:
             raise RuntimeError(
                 "GPUs with compute capability below 7.0 are not supported.")
         compute_capabilities.add(f"{major}.{minor}")
-else:
-    if len(compute_capabilities) > 1:
-        raise RuntimeError(
-            "Kernels for GPUs with different compute capabilities cannot be installed simultaneously right now.\nPlease restrict the length of TORCH_CUDA_ARCH_LIST to 1."
-        )
-    else:
-        gpu_version = compute_capabilities[0].replace(".", "")
 
 nvcc_cuda_version = get_nvcc_cuda_version(CUDA_HOME)
 if not compute_capabilities:
@@ -190,9 +175,8 @@ qgemm_w8a8_extension = CUDAExtension(
     name="qserve_backend.qgemm_w8a8",
     sources=[
         "csrc/qgemm/w8a8/pybind.cpp",
-        "csrc/qgemm/w8a8/gemm_cuda.cu",
+        "csrc/qgemm/w8a8/w8a8_gemm_cuda.cu",
     ],
-    extra_objects=[f"csrc/qgemm/w8a8/libs/gemm_cuda_kernel_sm_{gpu_version}.so"],
     extra_compile_args={
         "cxx": CXX_FLAGS,
         "nvcc": NVCC_FLAGS,
@@ -206,7 +190,6 @@ qgemm_w4a8_per_chn_extension = CUDAExtension(
         "csrc/qgemm/w4a8_per_chn/pybind.cpp",
         "csrc/qgemm/w4a8_per_chn/gemm_cuda.cu",
     ],
-    extra_objects=[f"csrc/qgemm/w4a8_per_chn/libs/gemm_cuda_kernel_sm_{gpu_version}.so"],
     extra_compile_args={
         "cxx": CXX_FLAGS,
         "nvcc": NVCC_FLAGS,
@@ -221,7 +204,6 @@ qgemm_w4a8_per_group_extension = CUDAExtension(
         "csrc/qgemm/w4a8_per_group/pybind.cpp",
         "csrc/qgemm/w4a8_per_group/gemm_cuda.cu",
     ],
-    extra_objects=[f"csrc/qgemm/w4a8_per_group/libs/gemm_cuda_kernel_sm_{gpu_version}.so"],
     extra_compile_args={
         "cxx": CXX_FLAGS,
         "nvcc": NVCC_FLAGS,
