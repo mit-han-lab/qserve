@@ -23,6 +23,7 @@ Quantization can accelerate large language model (LLM) inference. Going beyond I
 
 ## News
 
+- [2024/07] QServe W4A8 GEMM kernels source code now available!
 - [2024/05] 🔥 QServe is publicly released! Check our paper [here](https://arxiv.org/abs/2405.04532).
 
 ## Contents
