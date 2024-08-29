@@ -290,7 +290,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url="https://github.com/vllm-project/vllm",
     project_urls={
-        "Homepage": "https://github.com/vllm-project/vllm",
+        "Homepage": "https://github.com/mit-han-lab/qserve",
         "Documentation": "https://qserve_backend.readthedocs.io/en/latest/",
     },
     classifiers=[
