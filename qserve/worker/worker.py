@@ -47,6 +47,10 @@ class Worker:
         is_driver_worker: bool = False,
         precision: str = "w4a8",
         kv_cache_config: Optional[Dict] = None,
+        run_vlm: bool = False,
+        img_per_seq: int = 0,
+        img_rotation: bool = False,
+        img_files: str = None,
     ) -> None:
         self.model_config = model_config
         self.parallel_config = parallel_config
@@ -68,6 +72,10 @@ class Worker:
         self.gpu_cache = None
         self.precision = precision
         self.kv_cache_config = kv_cache_config
+        self.run_vlm = run_vlm
+        self.img_per_seq = img_per_seq
+        self.img_rotation = img_rotation
+        self.img_files = img_files
 
     def init_model(self, cupy_port: Optional[int] = None) -> None:
         if self.device_config.device.type == "cuda":
@@ -119,6 +127,10 @@ class Worker:
             kv_cache_config=self.kv_cache_config,
             quant_path=quant_path,
             group_size=group_size,
+            run_vlm=self.run_vlm,
+            img_per_seq=self.img_per_seq,
+            img_rotation=self.img_rotation,
+            img_files=self.img_files,
         )
         self.cache_engine = self.model_runner.cache_engine
 

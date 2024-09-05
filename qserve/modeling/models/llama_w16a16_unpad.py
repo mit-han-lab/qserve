@@ -29,11 +29,12 @@ import qserve_backend.fused_attention as fused_attention
 import torch
 from flash_attn.flash_attn_interface import flash_attn_varlen_func
 from qserve_backend import fused_kernels
+import torch
 from torch import nn
 from transformers import LlamaConfig
 
 import qserve.utils.constants
-from qserve.modeling.layers.activation import SiluAndMulQuant
+from qserve.modeling.layers.activation import SiluAndMul
 from qserve.modeling.layers.layernorm import RMSNorm, RMSNormGeneral
 from qserve.modeling.layers.quantized_linear import W4A8OF16LinearDynamicInputScale
 from qserve.modeling.layers.sampler import Sampler
@@ -51,53 +52,33 @@ max_seq_len = qserve.utils.constants.max_seq_len
 
 
 class LlamaMLP(nn.Module):
-    def __init__(self, args, group_size: int) -> None:
+    def __init__(self, args) -> None:
         super().__init__()
         hidden_size = args.hidden_size
         intermediate_size = args.intermediate_size
         self.use_int8 = True
 
-        self.gate_up_proj = W4A8OF16LinearDynamicInputScale(
-            hidden_size, 2 * intermediate_size, bias=False, group_size=group_size
+        self.gate_up_proj = nn.Linear(
+            hidden_size, 2 * intermediate_size, bias=False,
         )
-        self.down_proj = W4A8OF16LinearDynamicInputScale(
-            intermediate_size, hidden_size, bias=False, group_size=group_size
+        self.down_proj = nn.Linear(
+            intermediate_size, hidden_size, bias=False,
         )
 
-        self.act_fn = SiluAndMulQuant(act_sum=(group_size == -1))
+        self.act_fn = SiluAndMul()
 
-    def forward(self, input_metadata: InputMetadata):
-        activation_buffer = input_metadata.activation_buffer
-
+    def forward(self, x):
         # INT8 in, FP16 out
-        self.gate_up_proj(
-            activation_buffer.quantized_hidden_states_buffer,
-            activation_buffer.quantized_scale_buffer,
-            activation_buffer.quantized_sum_buffer,
-            activation_buffer.gate_up_proj_act_buffer,
-        )
-
-        # FP16 in, INT8 out
-        self.act_fn(
-            activation_buffer.gate_up_proj_act_buffer,
-            activation_buffer.quantized_mlp_act_buffer,
-            activation_buffer.quantized_scale_buffer,
-            activation_buffer.quantized_sum_buffer,
-        )
-
-        self.down_proj(
-            activation_buffer.quantized_mlp_act_buffer,
-            activation_buffer.quantized_scale_buffer,
-            activation_buffer.quantized_sum_buffer,
-            activation_buffer.out_down_proj_act_buffer,
-        )
+        gate_up = self.gate_up_proj(x)
+        x = self.act_fn(gate_up)
+        x = self.down_proj(x)
+        return x 
 
 
 class LlamaAttention(nn.Module):
     def __init__(
         self,
         args,
-        group_size: int,
         layer_idx: int,
         kv_cache_config: Optional[Dict] = None,
     ) -> None:
@@ -145,63 +126,44 @@ class LlamaAttention(nn.Module):
             attention_bias = args.attention_bias
         else:
             attention_bias = False
-        self.qkv_proj = W4A8OF16LinearDynamicInputScale(
+        self.qkv_proj = nn.Linear(
             hidden_size,
             (self.total_num_heads + 2 * self.total_num_kv_heads * num_kv_heads_replicas)
             * self.head_dim,
             bias=attention_bias,
-            group_size=group_size,
         )
 
-        self.o_proj = W4A8OF16LinearDynamicInputScale(
+        self.o_proj = nn.Linear(
             self.total_num_heads * self.head_dim,
             hidden_size,
             bias=attention_bias,
-            group_size=group_size,
         )
 
         self.kv_max_seq_len = min(max_seq_len, self.max_position_embeddings)
 
-        if group_size == -1:  # per-channel quantization
-            self.invoke_quant = self.invoke_quant_with_act_sum
-        else:
-            self.invoke_quant = self.invoke_quant_wo_act_sum
+        # self.invoke_quant = self.invoke_quant_wo_act_sum
 
-    def invoke_quant_wo_act_sum(self, activation_buffer, attn_output):
-        fused_kernels.invoke_quant(
-            activation_buffer.quantized_hidden_states_buffer,
-            attn_output,
-            activation_buffer.quantized_scale_buffer,
-        )
-
-    def invoke_quant_with_act_sum(self, activation_buffer, attn_output):
-        fused_kernels.invoke_quant_fuse_sum(
-            activation_buffer.quantized_hidden_states_buffer,
-            attn_output,
-            activation_buffer.quantized_sum_buffer,
-            activation_buffer.quantized_scale_buffer,
-        )
+    # def invoke_quant_wo_act_sum(self, activation_buffer, attn_output):
+    #     fused_kernels.invoke_quant(
+    #         activation_buffer.quantized_hidden_states_buffer,
+    #         attn_output,
+    #         activation_buffer.quantized_scale_buffer,
+    #     )
 
     def forward(
         self,
+        hidden_states,
         input_metadata: InputMetadata,
     ):
-        activation_buffer = input_metadata.activation_buffer
-        # INT8 in, FP16 out for this module
-        # print(self.layer_idx, "begin", hidden_states.isnan().sum(), input_scale.shape)
-        self.qkv_proj(
-            activation_buffer.quantized_hidden_states_buffer,
-            activation_buffer.quantized_scale_buffer,
-            activation_buffer.quantized_sum_buffer,
-            activation_buffer.qkv_proj_act_buffer,
-        )
+        qkv = self.qkv_proj(hidden_states)
+
         # qkv = qkv.half()
         if input_metadata.is_prompt:
             # Note: the conversion of kv_scale_orig_quant is currently important
             # by default, self.kv_scale_orig_quant will have the same dtype as the model.
             # but the kernel requires float.
             fused_attention.apply_bias_rope_update_kv_cache(
-                activation_buffer.qkv_proj_act_buffer,
+                qkv,
                 input_metadata.context_lens,
                 input_metadata.padding_offsets,  # size [batch_size, max_seq_len]
                 input_metadata.block_tables[self.layer_idx],
@@ -222,7 +184,7 @@ class LlamaAttention(nn.Module):
             )
 
             # FIXME: currently qkv share same scale, plan to use seperate scales
-            q, k, v = activation_buffer.qkv_proj_act_buffer.split(
+            q, k, v = qkv.split(
                 [self.q_size, self.kv_size, self.kv_size], dim=-1
             )
             q = q.reshape(q.size(0), self.total_num_heads, self.head_dim)
@@ -242,7 +204,7 @@ class LlamaAttention(nn.Module):
             )
             attn_output = attn_output.reshape(q.size(0), -1)
         else:
-            q, k, v = activation_buffer.qkv_proj_act_buffer.split(
+            q, k, v = qkv.split(
                 [self.q_size, self.kv_size, self.kv_size], dim=-1
             )
             # k_cache, v_cache = kv_cache
@@ -256,7 +218,7 @@ class LlamaAttention(nn.Module):
             tokens_per_block = 64
             size_per_token = (
                 self.num_kv_heads * self.head_dim * (1 if self.use_int8 else 2)
-            )  # size per token
+            )  # size per token for kv cache
             timestep = input_metadata.max_seq_len
             rotary_embedding_dim = self.head_dim
             rotary_base = self.rope_theta
@@ -280,52 +242,45 @@ class LlamaAttention(nn.Module):
                 self.kv_cache_config["ZEROS_ENABLED"],  # kv_cache_with_zeros
             )
             attn_output = attn_output.reshape(q.size(0), -1)
-        # FP16 in, INT8 out
-        self.invoke_quant(activation_buffer, attn_output)
-        # INT8 in, FP16 out
-        self.o_proj(
-            activation_buffer.quantized_hidden_states_buffer,
-            activation_buffer.quantized_scale_buffer,
-            activation_buffer.quantized_sum_buffer,
-            activation_buffer.out_down_proj_act_buffer,
-        )
+        # # FP16 in, INT8 out
+        # self.invoke_quant(activation_buffer, attn_output)
+        # # INT8 in, FP16 out
+        output = self.o_proj(attn_output)
+        return output
 
 
 class LlamaDecoderLayer(nn.Module):
     def __init__(
         self,
         config: LlamaConfig,
-        group_size: int,
         layer_idx: int,
         kv_cache_config: Optional[Dict] = None,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.use_int8 = True
+        self.use_int8 = True    # NOTE: INT8 kv cache
         # Requires transformers > 4.32.0
         rope_theta = getattr(config, "rope_theta", 10000)
         rope_scaling = getattr(config, "rope_scaling", None)
         max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
         self.self_attn = LlamaAttention(
             config,
-            group_size=group_size,
             layer_idx=layer_idx,
             kv_cache_config=kv_cache_config,
         )
-        self.mlp = LlamaMLP(config, group_size=group_size)
+        self.mlp = LlamaMLP(config)
 
-        self.input_layernorm = RMSNormGeneral(
+        self.input_layernorm = RMSNorm(
             config.hidden_size,
-            act_sum=(group_size == -1),
             eps=config.rms_norm_eps,
-            use_per_token_quant=True,
+            use_quant=False,
         )
-        self.post_attention_layernorm = RMSNormGeneral(
+        self.post_attention_layernorm = RMSNorm(
             config.hidden_size,
-            act_sum=(group_size == -1),
             eps=config.rms_norm_eps,
-            use_per_token_quant=True,
+            use_quant=False,
         )
+
 
     def forward(
         self,
@@ -333,31 +288,16 @@ class LlamaDecoderLayer(nn.Module):
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
         # FP16 in FP16 out
-        activation_buffer = input_metadata.activation_buffer
         # Self Attention
         residual = hidden_states
-        # INT8 quantization
-        self.input_layernorm(
-            hidden_states,
-            activation_buffer.quantized_hidden_states_buffer,
-            activation_buffer.quantized_scale_buffer,
-            activation_buffer.quantized_sum_buffer,
-        )
-        # INT8 -> FP16
-        self.self_attn(input_metadata)
-        hidden_states = residual + activation_buffer.out_down_proj_act_buffer
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states = self.self_attn(hidden_states, input_metadata)
+        hidden_states = residual + hidden_states
         # Fully Connected
         residual = hidden_states
-        # FP16 -> INT8
-        self.post_attention_layernorm(
-            hidden_states,
-            activation_buffer.quantized_hidden_states_buffer,
-            activation_buffer.quantized_scale_buffer,
-            activation_buffer.quantized_sum_buffer,
-        )
-        # INT8 -> FP16
-        self.mlp(input_metadata)
-        hidden_states = residual + activation_buffer.out_down_proj_act_buffer
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
         return hidden_states
 
 
@@ -365,7 +305,6 @@ class LlamaModel(nn.Module):
     def __init__(
         self,
         config: LlamaConfig,
-        group_size: int,
         quant_kv_cache: bool = True,
         kv_cache_config: Optional[Dict] = None,
     ) -> None:
@@ -382,7 +321,7 @@ class LlamaModel(nn.Module):
         self.layers = nn.ModuleList(
             [
                 (
-                    LlamaDecoderLayer(config, group_size, i, kv_cache_config)
+                    LlamaDecoderLayer(config, i, kv_cache_config)
                     if quant_kv_cache
                     else None
                 )
@@ -413,7 +352,6 @@ class LlamaForCausalLM(nn.Module):
     def __init__(
         self,
         config: LlamaConfig,
-        group_size: int,
         sampling_params: SamplingParams,
         quant_config: Optional[QServeQuantConfig] = QServeQuantConfig(weight_bits=4),
         kv_cache_config: Optional[Dict] = None,
@@ -425,7 +363,7 @@ class LlamaForCausalLM(nn.Module):
         self.config = config
         self.quant_config = quant_config
         self.model = LlamaModel(
-            config, group_size, quant_kv_cache, kv_cache_config=kv_cache_config
+            config, quant_kv_cache, kv_cache_config=kv_cache_config
         )
         vocab_size = config.vocab_size
         # NOTE: The LM head is not quantized.
@@ -538,8 +476,8 @@ class LlamaForCausalLM(nn.Module):
             if "bias" in name:
                 pass
                 # continue
-            if "norm" in name:
-                continue
+            # if "norm" in name:
+            #     continue
 
             packed_dim = None
             is_transposed = False

@@ -1,7 +1,7 @@
 # original file: https://github.com/vllm-project/vllm/blob/main/vllm/config.py
 # modified by: Haotian Tang and Shang Yang
 from typing import Optional, Union
-
+import os
 import torch
 from transformers import AutoConfig
 
@@ -77,6 +77,7 @@ class ModelConfig:
         quantization: Optional[str] = None,
         enforce_eager: bool = False,
         max_context_len_to_capture: Optional[int] = None,
+        run_vlm: bool = False,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
@@ -91,10 +92,20 @@ class ModelConfig:
         self.quantization = quantization
         self.enforce_eager = enforce_eager
         self.max_context_len_to_capture = max_context_len_to_capture
+        self.run_vlm = run_vlm
 
-        self.hf_config = AutoConfig.from_pretrained(
-            self.model, trust_remote_code=trust_remote_code
-        )
+        # Support Visual Langugage Model (VILA)
+        if self.run_vlm:
+            self.vlm_config = AutoConfig.from_pretrained(
+                self.model, trust_remote_code=trust_remote_code
+            )
+            self.hf_config = AutoConfig.from_pretrained(
+                os.path.join(self.model, "llm"), trust_remote_code=trust_remote_code
+            )
+        else:
+            self.hf_config = AutoConfig.from_pretrained(
+                self.model, trust_remote_code=trust_remote_code
+            )
         # TODO (kentang-mit@): make it more general. refer to vllm's _get_and_verify_max_len
         self.dtype = self.hf_config.torch_dtype
         self.max_model_len = self.hf_config.max_position_embeddings

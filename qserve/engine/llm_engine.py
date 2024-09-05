@@ -8,7 +8,7 @@
 import copy
 import time
 from typing import Any, Iterable, List, Optional, Union
-
+import os
 import torch
 
 from qserve.config import (
@@ -38,10 +38,37 @@ from qserve.utils.utils import (
     get_ip,
     get_open_port,
 )
+import qserve.utils.constants
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
 
+
+def tokenizer_image_token(
+    prompt,
+    tokenizer,
+    image_token_index,
+    return_tensors=None,
+):
+    prompt_chunks = [tokenizer(chunk).input_ids for chunk in prompt.split("<image>")]
+
+    def insert_separator(X, sep):
+        return [ele for sublist in zip(X, [sep] * len(X)) for ele in sublist][:-1]
+
+    input_ids = []
+    offset = 0
+
+    for x in insert_separator(prompt_chunks, [image_token_index] * (offset + 1)):
+        input_ids.extend(x[offset:])
+
+    if return_tensors is not None:
+        if return_tensors == "pt":
+            return torch.tensor(input_ids, dtype=torch.long)
+        elif return_tensors == "list":
+            pass
+        else:
+            raise ValueError(f"Unsupported tensor type: {return_tensors}")
+    return input_ids
 
 class LLMEngine:
     """An LLM engine that receives requests and generates texts.
@@ -84,6 +111,11 @@ class LLMEngine:
         kv_zp: bool,
         quant_path: Optional[str],
         group_size: int,
+        run_vlm: bool,
+        omit_prompt: bool,
+        img_per_seq: int,
+        img_files: str,
+        img_rotation: bool,
         log_stats: bool,
         profiling_mode: bool = False,
     ) -> None:
@@ -126,6 +158,11 @@ class LLMEngine:
         )
         self.quant_path = quant_path
         self.group_size = group_size
+        self.run_vlm = run_vlm
+        self.omit_prompt = omit_prompt
+        self.img_per_seq = img_per_seq
+        self.img_rotation = img_rotation
+        self.img_files = img_files
         self._verify_args()
 
         self._init_tokenizer()
@@ -174,6 +211,10 @@ class LLMEngine:
             is_driver_worker=True,
             precision=self.precision,
             kv_cache_config=self.kv_cache_config,
+            run_vlm=self.run_vlm,
+            img_per_seq=self.img_per_seq,
+            img_rotation=self.img_rotation,
+            img_files=self.img_files,
         )
         self.workers.append(self.driver_worker)
         # self._run_workers("init_model")
@@ -191,7 +232,11 @@ class LLMEngine:
         # self.tokenizer: TokenizerGroup = TokenizerGroup(
         #     self.model_config.tokenizer, **init_kwargs
         # )
-        self.tokenizer = get_tokenizer(self.model_config.tokenizer, **init_kwargs)
+
+        if self.run_vlm:
+            self.tokenizer = get_tokenizer(os.path.join(self.model_config.tokenizer, "llm"), **init_kwargs)
+        else:
+            self.tokenizer = get_tokenizer(self.model_config.tokenizer, **init_kwargs)
 
     def _verify_args(self) -> None:
         # TODO(kentang-mit@: add back
@@ -247,24 +292,37 @@ class LLMEngine:
 
     def encode_request(
         self,
-        request_id: str,  # pylint: disable=unused-argument
+        request_key: str,  # pylint: disable=unused-argument
         prompt: Optional[str],
         prompt_token_ids: Optional[List[int]] = None,
     ):
         if prompt_token_ids is None:
             assert prompt is not None
-            prompt_token_ids = self.tokenizer.encode(prompt)
+
+            # NOTE: Support special token for VLMs: <image>
+            # prompt_token_ids = self.tokenizer.encode(prompt)
+
+            prompt_token_ids = (
+                tokenizer_image_token(
+                    prompt,
+                    self.tokenizer,
+                    qserve.utils.constants.LLAVA_DEFAULT_IMAGE_TOKEN_IDX,
+                    return_tensors="list",
+                )
+            )
+
         return prompt_token_ids
 
     def add_request(
         self,
-        request_id: str,
+        request_key: str,
         prompt: Optional[str],
         sampling_params: SamplingParams,
         prompt_token_ids: Optional[List[int]] = None,
         arrival_time: Optional[float] = None,
         prefix_pos: Optional[int] = None,
         profiling_config: Optional[ProfilingConfig] = None,
+        pil_image = None,
     ) -> None:
         """Add a request to the engine's request pool.
 
@@ -273,7 +331,7 @@ class LLMEngine:
         determined by the scheduler.
 
         Args:
-            request_id: The unique ID of the request.
+            request_key: The unique ID of the request.
             prompt: The prompt string. Can be None if prompt_token_ids is
                 provided.
             sampling_params: The sampling parameters for text generation.
@@ -301,11 +359,11 @@ class LLMEngine:
             >>> # set request arguments
             >>> example_prompt = "Who is the president of the United States?"
             >>> sampling_params = SamplingParams(temperature=0.0)
-            >>> request_id = 0
+            >>> request_key = 0
             >>>
             >>> # add the request to the engine
             >>> engine.add_request(
-            >>>    str(request_id),
+            >>>    str(request_key),
             >>>    example_prompt,
             >>>    SamplingParams(temperature=0.0))
             >>> # continue the request processing
@@ -317,7 +375,7 @@ class LLMEngine:
 
         if profiling_config is None:
             prompt_token_ids = self.encode_request(
-                request_id=request_id,
+                request_key=request_key,
                 prompt=prompt,
                 prompt_token_ids=prompt_token_ids,
             )
@@ -331,13 +389,15 @@ class LLMEngine:
                 .numpy()
                 .tolist()
             )
+            if self.run_vlm:
+                prompt_token_ids[0: self.img_per_seq] = [qserve.utils.constants.LLAVA_DEFAULT_IMAGE_TOKEN_IDX,] * self.img_per_seq
             sampling_params = copy.deepcopy(sampling_params)
             sampling_params.max_tokens = generation_len
 
         # Create the sequences.
         block_size = self.cache_config.block_size
         seq_id = next(self.seq_counter)
-        seq = Sequence(seq_id, prompt, prompt_token_ids, block_size)
+        seq = Sequence(seq_id, request_key, prompt, prompt_token_ids, block_size, self.run_vlm, self.img_per_seq, pil_image)
 
         # Check whether the input specifies prefix
         prefix = (
@@ -354,7 +414,7 @@ class LLMEngine:
 
         # Create the sequence group.
         seq_group = SequenceGroup(
-            request_id, [seq], sampling_params, arrival_time, prefix
+            request_key, [seq], sampling_params, arrival_time, prefix
         )
 
         # Add the sequence group to the scheduler.
@@ -364,11 +424,11 @@ class LLMEngine:
         else:
             return False
 
-    def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:
+    def abort_request(self, request_key: Union[str, Iterable[str]]) -> None:
         """Aborts a request(s) with the given ID.
 
         Args:
-            request_id: The ID(s) of the request to abort.
+            request_key: The ID(s) of the request to abort.
 
         Details:
             - Refer to the
@@ -376,12 +436,12 @@ class LLMEngine:
               from class :class:`~vllm.core.scheduler.Scheduler`.
 
         Example:
-            >>> # initialize engine and add a request with request_id
-            >>> request_id = str(0)
+            >>> # initialize engine and add a request with request_key
+            >>> request_key = str(0)
             >>> # abort the request
-            >>> engine.abort_request(request_id)
+            >>> engine.abort_request(request_key)
         """
-        self.scheduler.abort_seq_group(request_id)
+        self.scheduler.abort_seq_group(request_key)
 
     def get_model_config(self) -> ModelConfig:
         """Gets the model configuration."""
@@ -424,6 +484,7 @@ class LLMEngine:
                 request_outputs.append(
                     {
                         "id": seqs[0].seq_id,
+                        "key": seqs[0].request_key,
                         "text": seqs[0].output_text,
                         "finished": True,
                     }
@@ -433,6 +494,7 @@ class LLMEngine:
                 request_outputs.append(
                     {
                         "id": seqs[0].seq_id,
+                        "key": seqs[0].request_key,
                         "tokens": seqs[0].get_token_ids(),
                         "finished": False,
                     }
@@ -537,7 +599,7 @@ class LLMEngine:
                 # output = all_outputs[0]
             else:
                 output = []
-            out = self._process_model_outputs(output, self.scheduler_outputs)
+            out = self._process_model_outputs(output, self.scheduler_outputs)            
         else:
             # TODO (shang): Without ifb mode, implement how to decode
             # Execute the model.
@@ -607,9 +669,58 @@ class LLMEngine:
 
     def _finalize_sequence(self, seq: Sequence) -> None:
         if not self.profiling_mode:
-            seq.output_text = self.get_tokenizer_for_seq(seq).decode(
-                seq.data.get_token_ids()
-            )
+            if self.omit_prompt:
+                token_ids = seq.data.get_token_ids()
+                def remove_sublist(lst, sublist):
+                    n = len(sublist)
+                    i = 0
+                    while i <= len(lst) - n:
+                        if lst[i:i+n] == sublist:
+                            del lst[i:i+n]
+                        else:
+                            i += 1
+                    return lst
+                token_ids = remove_sublist(token_ids, seq.prompt_token_ids)
+                seq.output_text = self.get_tokenizer_for_seq(seq).decode(token_ids)
+            else:
+                if not self.run_vlm:
+                    seq.output_text = self.get_tokenizer_for_seq(seq).decode(
+                        [token for token in seq.data.get_token_ids()]
+                    )
+                else:
+                    # Deal with special token <image>
+                    img_token = qserve.utils.constants.LLAVA_DEFAULT_IMAGE_TOKEN_IDX
+                    token_ids = seq.data.get_token_ids()
+                    tokenizer = self.get_tokenizer_for_seq(seq)
+                    # for token in token_ids:
+                    #     if token == img_token:
+                    #         seq.output_text += qserve.utils.constants.LLAVA_DEFAULT_IMAGE_TOKEN
+                    #     else:
+                    #         seq.output_text += tokenizer.decode([token], clean_up_tokenization_spaces=False)
+                    
+                    # NOTE: Fix the missing space of decoding.
+                    def split_list_by_value(lst, val):
+                        segments = []
+                        current_segment = []
+                        for item in lst:
+                            if item == val:
+                                if current_segment:
+                                    segments.append(current_segment)
+                                    current_segment = []
+                                segments.append([val])
+                            else:
+                                current_segment.append(item)
+                        if current_segment:
+                            segments.append(current_segment)
+                        return segments
+
+                    token_segs = split_list_by_value(token_ids, img_token)
+
+                    for token_seg in token_segs:
+                        if token_seg == [img_token]:
+                            seq.output_text += qserve.utils.constants.LLAVA_DEFAULT_IMAGE_TOKEN
+                        else:
+                            seq.output_text += tokenizer.decode(token_seg)
 
     def _run_workers(
         self,

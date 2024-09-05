@@ -26,9 +26,7 @@ random.seed(484)
 
 def create_test_prompts(conv_t, num_prompts=256) -> List[Tuple[str, SamplingParams]]:
     """Create a list of test prompts with their sampling parameters."""
-    sampling_params = SamplingParams(
-        temperature=0.0, top_p=1.0, stop_token_ids=[128001, 128009], max_tokens=1024
-    )
+    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, stop_token_ids=[128001, 128009], max_tokens=1024)
     dataset = datasets.load_dataset("allenai/WildChat")["train"]
     prompts = []
     i = 0
@@ -51,15 +49,15 @@ def create_test_prompts(conv_t, num_prompts=256) -> List[Tuple[str, SamplingPara
 
 def process_requests(engine: LLMEngine, test_prompts: List[Tuple[str, SamplingParams]]):
     """Continuously process a list of prompts and handle the outputs."""
-    request_id = 0
+    request_key = 0
 
     while test_prompts or engine.has_unfinished_requests():
         if test_prompts:
             prompt, sampling_params = test_prompts.pop(0)
-            succeeded = engine.add_request(str(request_id), prompt, sampling_params)
+            succeeded = engine.add_request(str(request_key), prompt, sampling_params)
             if succeeded:
-                request_id += 1
-        num_test_prompts = request_id
+                request_key += 1
+        num_test_prompts = request_key
 
         if not test_prompts:
             break

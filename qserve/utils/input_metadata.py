@@ -5,11 +5,17 @@
 #   year={2024}
 # }
 
+import os
 from typing import Optional
 
 import torch
 from xformers.ops import AttentionBias
 
+from qserve.utils.llava_image_processing import (
+    process_images,
+    load_images,
+    vis_images,
+)
 
 class ActivationBuffer:
     """
@@ -20,12 +26,18 @@ class ActivationBuffer:
         batched_seq_len: The batched sequence length. Sum of all the sequence lengths in the batch.
     """
 
-    def __init__(self, model, batched_seq_len: int):
+    def __init__(self, model, batched_seq_len: int, run_vlm: bool = False):
         self.model_class = model.__class__.__name__
+        
+        if run_vlm:
+            model = model.llm
+
         self.model_dtype = model.model.embed_tokens.weight.dtype
         self.device = model.model.embed_tokens.weight.device
         assert self.model_class in [
             "LlamaForCausalLM",
+            "LlavaLlamaForCausalLM",
+            "VilaLlamaForCausalLM",
             "MixtralForCausalLM",
         ], f"model_class: {self.model_class} is currently not supported."
         assert (
@@ -45,6 +57,10 @@ class ActivationBuffer:
     def allocate_activation_buffer(self):
         if self.model_class == "LlamaForCausalLM":
             self.__allocate_activation_buffer_llama()
+        elif self.model_class == "LlavaLlamaForCausalLM":
+            raise NotImplementedError("LlavaLlamaForCausalLM is not supported yet.")
+        elif self.model_class == "VilaLlamaForCausalLM":
+            self.__allocate_activation_buffer_vila_llama()
         elif self.model_class == "MixtralForCausalLM":
             raise NotImplementedError("MixtralForCausalLM is not supported yet.")
         else:
@@ -92,6 +108,8 @@ class ActivationBuffer:
             (self.batched_seq_len), device=self.device, dtype=torch.float16
         )
 
+    def __allocate_activation_buffer_vila_llama(self):
+        self.__allocate_activation_buffer_llama()
 
 class InputMetadata:
     """Metadata for input sequences. Used for PagedAttention.
@@ -127,6 +145,10 @@ class InputMetadata:
         kv_cache_dtype: torch.dtype,
         batched_seq_len: int,
         model: torch.nn.Module,
+        run_vlm: bool = False,
+        img_per_seq: int = 0,
+        img_files: str = None,
+        pil_images: list = None,
     ) -> None:
         # self.seq_groups = seq_groups
         # self.seq_data =
@@ -139,6 +161,9 @@ class InputMetadata:
         self.block_tables = block_tables
         self.max_block_table_len = max_block_table_len
         self.kv_scales = kv_scales
+        self.run_vlm = run_vlm
+        self.img_per_seq = img_per_seq
+        self.img_files = img_files
         # self.selected_token_indices = selected_token_indices
         # self.categorized_sample_indices = categorized_sample_indices
 
@@ -175,8 +200,38 @@ class InputMetadata:
         # Set during the execution of the first attention op.
         self.attn_bias: Optional[AttentionBias] = None
 
-        self.activation_buffer = ActivationBuffer(model, batched_seq_len)
+        self.activation_buffer = ActivationBuffer(model, batched_seq_len, self.run_vlm)
         self.activation_buffer.allocate_activation_buffer()
+
+        if self.is_prompt:
+            if self.run_vlm:
+                if pil_images is not None:
+                    assert len(pil_images) == self.img_per_seq * self.num_prompts
+                    images = pil_images
+                else:   # Load images from file names
+                    image_files = self.img_files.split(",")
+                    if len(image_files) == self.img_per_seq:
+                        # Benchmarking mode, duplicate images by batch size.
+                        image_files = image_files * self.num_prompts
+                    else:
+                        assert len(image_files) == self.img_per_seq * self.num_prompts
+                    image_num = len(image_files)
+                    images = load_images(image_files)
+                    vis_image = False
+                    if vis_image:
+                        print("=" * 50)
+                        print("Input Image:")
+                        vis_images([image_files[0]])
+                # Similar operation in model_worker.py
+                image_processor = model.get_vision_tower().image_processor
+                image_tensor = process_images(images, image_processor, model.config)
+                if type(image_tensor) is list:
+                    image_tensor = [
+                        image.to(model.device, dtype=torch.float16) for image in image_tensor
+                    ]
+                else:
+                    image_tensor = image_tensor.to(model.device, dtype=torch.float16)
+                self.image_tensor = image_tensor
 
     # def __repr__(self) -> str:
     #     # Print only useful metadata.

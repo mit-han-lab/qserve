@@ -1,6 +1,7 @@
 # original file: https://github.com/vllm-project/vllm/blob/main/vllm/sequence.py
 # modified by: Haotian Tang and Shang Yang
 """Sequence and its related classes."""
+import os
 import copy
 import enum
 from typing import Dict, List, Optional, Union
@@ -10,6 +11,7 @@ import torch
 from qserve.block import LogicalTokenBlock
 from qserve.prefix import Prefix
 from qserve.sampling_params import SamplingParams
+import qserve.utils.constants
 
 PromptLogprobs = List[Optional[Dict[int, float]]]
 SampleLogprobs = List[Dict[int, float]]
@@ -68,10 +70,12 @@ class SequenceData:
     def __init__(
         self,
         prompt_token_ids: List[int],
+        pil_image = None,
     ) -> None:
         self.prompt_token_ids = prompt_token_ids
         self.output_token_ids: List[int] = []
         self.cumulative_logprob = 0.0
+        self.pil_image = pil_image
 
     def append_token_id(self, token_id: int, logprob: float) -> None:
         self.output_token_ids.append(token_id)
@@ -121,15 +125,24 @@ class Sequence:
     def __init__(
         self,
         seq_id: int,
+        request_key: str,
         prompt: str,
         prompt_token_ids: List[int],
         block_size: int,
+        run_vlm: bool = False,
+        img_per_seq: int = 0,
+        pil_image = None,
     ) -> None:
         self.seq_id = seq_id
+        self.request_key = request_key
         self.prompt = prompt
         self.block_size = block_size
+        self.run_vlm = run_vlm
+        self.img_per_seq = img_per_seq
+        self.pil_image = pil_image
+        self.prompt_token_ids = prompt_token_ids
 
-        self.data = SequenceData(prompt_token_ids)
+        self.data = SequenceData(prompt_token_ids, pil_image=pil_image)
         self.output_logprobs: SampleLogprobs = []
         self.output_text = ""
 
@@ -153,6 +166,10 @@ class Sequence:
 
     def _append_tokens_to_blocks(self, token_ids: List[int]) -> None:
         cursor = 0
+
+        if self.run_vlm:
+            token_per_img = qserve.utils.constants.LLAVA_DEFAULT_TOKEN_PER_IMAGE
+            token_ids = token_ids + [0] * (self.img_per_seq * (token_per_img - 1))
         while cursor < len(token_ids):
             if not self.logical_token_blocks:
                 self._append_logical_block()
@@ -229,7 +246,7 @@ class SequenceGroup:
     """A group of sequences that are generated from the same prompt.
 
     Args:
-        request_id: The ID of the request.
+        request_key: The ID of the request.
         seqs: The list of sequences.
         sampling_params: The sampling parameters used to generate the outputs.
         arrival_time: The arrival time of the request.
@@ -238,13 +255,13 @@ class SequenceGroup:
 
     def __init__(
         self,
-        request_id: str,
+        request_key: str,
         seqs: List[Sequence],
         sampling_params: SamplingParams,
         arrival_time: float,
         prefix: Optional[Prefix] = None,
     ) -> None:
-        self.request_id = request_id
+        self.request_key = request_key
         self.seqs_dict = {seq.seq_id: seq for seq in seqs}
         self.sampling_params = sampling_params
         self.arrival_time = arrival_time
@@ -327,7 +344,7 @@ class SequenceGroup:
 
     def __repr__(self) -> str:
         return (
-            f"SequenceGroup(request_id={self.request_id}, "
+            f"SequenceGroup(request_key={self.request_key}, "
             f"sampling_params={self.sampling_params}, "
             f"num_seqs={len(self.seqs_dict)})"
         )
@@ -337,7 +354,7 @@ class SequenceGroupMetadata:
     """Metadata for a sequence group. Used to create `InputMetadata`.
 
     Args:
-        request_id: The ID of the request.
+        request_key: The ID of the request.
         is_prompt: Whether the request is at prompt stage.
         seq_data: The sequence data. (Seq id -> sequence data)
         sampling_params: The sampling parameters used to generate the outputs.
@@ -348,14 +365,14 @@ class SequenceGroupMetadata:
 
     def __init__(
         self,
-        request_id: str,
+        request_key: str,
         is_prompt: bool,
         seq_data: Dict[int, SequenceData],
         sampling_params: SamplingParams,
         block_tables: Dict[int, List[int]],
         prefix: Optional[Prefix] = None,
     ) -> None:
-        self.request_id = request_id
+        self.request_key = request_key
         self.is_prompt = is_prompt
         self.seq_data = seq_data
         self.sampling_params = sampling_params
