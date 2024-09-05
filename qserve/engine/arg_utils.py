@@ -70,6 +70,11 @@ class EngineArgs:
     # kv_zp: bool = True
     quant_path: Optional[str] = None
     group_size: int = -1
+    run_vlm: bool = False
+    omit_prompt: bool = False
+    img_per_seq: int = 0
+    img_files: str = None
+    img_rotation: bool = False
 
     def __post_init__(self):
         if self.tokenizer is None:
@@ -338,6 +343,33 @@ class EngineArgs:
             default=-1,
             help="Group size for weight quantization, -1 means per-channel",
         )
+        parser.add_argument(
+            "--run-vlm",
+            action="store_true",
+            help="Run Visual Language Models (VILA)",
+        )
+        parser.add_argument(
+            "--omit-prompt",
+            action="store_true",
+            help="Whether to omit the prompt in the final output",
+        )
+        parser.add_argument(
+            "--img-per-seq",
+            type=int,
+            default=0,
+            help="Number of images per sequence",
+        )
+        parser.add_argument(
+            "--img-files",
+            type=str,
+            default=None,
+            help="Path to the image files, split by comma.",
+        )
+        parser.add_argument(
+            "--img-rotation",
+            action="store_true",
+            help="Enable image rotation. When rotation (hadamard) is used in LLM quantization, the image embedding should also be rotated.",
+        )
         return parser
 
     @classmethod
@@ -363,6 +395,11 @@ class EngineArgs:
         bool,  # kv_zp
         str,  # quant_path
         int,  # group_size
+        bool,  # run_vlm
+        bool, # omit_prompt
+        int,  # img_per_seq
+        str,  # img_files
+        bool, # img_rotation
     ]:
         assert self.precision in [
             "w4a8",
@@ -371,7 +408,9 @@ class EngineArgs:
             "w8a8",
             "w8a8kv4",
             "w8a8kv8",
-        ], f"Invalid precision {self.precision} specified. Please choose from w4a8, w4a8kv4, w4a8kv8, w8a8, w8a8kv4, w8a8kv8."
+            "w16a16kv8",
+            "w16a16kv4"
+        ], f"Invalid precision {self.precision} specified. Please choose from w4a8, w4a8kv4, w4a8kv8, w8a8, w8a8kv4, w8a8kv8, w16a16kv8, w16a16kv4."
 
         if "kv4" in self.precision:
             self.kv_cache_bits = 4
@@ -402,6 +441,7 @@ class EngineArgs:
             self.quantization,
             self.enforce_eager,
             self.max_context_len_to_capture,
+            self.run_vlm,
         )
         self.kv_cache_bits = _get_dtype_size(
             _STR_DTYPE_TO_TORCH_DTYPE[self.kv_cache_dtype]
@@ -435,6 +475,11 @@ class EngineArgs:
 
         quant_path = self.quant_path
         group_size = self.group_size
+        run_vlm = self.run_vlm
+        omit_prompt = self.omit_prompt
+        img_per_seq = self.img_per_seq
+        img_files = self.img_files
+        img_rotation = self.img_rotation
         return (
             model_config,
             cache_config,
@@ -448,6 +493,11 @@ class EngineArgs:
             kv_zp,
             quant_path,
             group_size,
+            run_vlm,
+            omit_prompt,
+            img_per_seq,
+            img_files,
+            img_rotation,
         )
 
 

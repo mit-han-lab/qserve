@@ -117,6 +117,9 @@ if __name__ == "__main__":
         if "_proj" in key:
             pass
         else:
+            if "emb" in key:
+                print(key)
+                print(fake_quant_ckpt[key].data)
             param.data = fake_quant_ckpt[key].data
 
     torch.save(model.state_dict(), f"{args.output_path}/quant_model.pt")

@@ -18,11 +18,12 @@ dependencies = [
     "transformers==4.37.2", "datasets",
     "lm_eval==0.3.0", "texttable",
     "toml", "attributedict",
-    "xformers",
+    "xformers==0.0.26.post1",
     "protobuf",
     "gradio==3.35.2", "gradio_client==0.2.9",
     "fastapi", "uvicorn",
-    "pydantic==1.10.14"
+    "pydantic==1.10.14",
+    "webdataset",
 ]
 
 [tool.setuptools.packages.find]

@@ -114,7 +114,7 @@ class Scheduler:
         # Add sequence groups to the waiting queue.
         self.waiting.append(seq_group)
 
-    def abort_seq_group(self, request_id: Union[str, Iterable[str]]) -> None:
+    def abort_seq_group(self, request_key: Union[str, Iterable[str]]) -> None:
         """Aborts a sequence group with the given ID.
 
         Check if the sequence group with the given ID
@@ -125,22 +125,22 @@ class Scheduler:
         Otherwise, do nothing.
 
         Args:
-            request_id: The ID(s) of the sequence group to abort.
+            request_key: The ID(s) of the sequence group to abort.
         """
-        if isinstance(request_id, str):
-            request_id = (request_id,)
-        request_ids = set(request_id)
+        if isinstance(request_key, str):
+            request_key = (request_key,)
+        request_keys = set(request_key)
         for state_queue in [self.waiting, self.running, self.swapped]:
             aborted_groups: List[SequenceGroup] = []
             for seq_group in state_queue:
-                if not request_ids:
+                if not request_keys:
                     # Using 'break' here may add two extra iterations,
                     # but is acceptable to reduce complexity .
                     break
-                if seq_group.request_id in request_ids:
+                if seq_group.request_key in request_keys:
                     # Appending aborted group into pending list.
                     aborted_groups.append(seq_group)
-                    request_ids.remove(seq_group.request_id)
+                    request_keys.remove(seq_group.request_key)
             for aborted_group in aborted_groups:
                 # Remove the sequence group from the state queue.
                 state_queue.remove(aborted_group)
@@ -352,7 +352,7 @@ class Scheduler:
                 block_tables[seq_id] = self.block_manager.get_block_table(seq)
 
             seq_group_metadata = SequenceGroupMetadata(
-                request_id=seq_group.request_id,
+                request_key=seq_group.request_key,
                 is_prompt=scheduler_outputs.prompt_run,
                 seq_data=seq_data,
                 sampling_params=seq_group.sampling_params,
@@ -373,7 +373,7 @@ class Scheduler:
                 seq_data[seq_id] = seq.data
 
             seq_group_metadata = SequenceGroupMetadata(
-                request_id=seq_group.request_id,
+                request_key=seq_group.request_key,
                 is_prompt=scheduler_outputs.prompt_run,
                 seq_data=seq_data,
                 sampling_params=seq_group.sampling_params,

@@ -166,7 +166,7 @@ class W4A8OF16LinearDynamicInputScale(torch.nn.Module):
         if group_size != -1:  # per-group quantization
             # Step 1: Quantize the weights to int8
             linear_weight = linear.weight.data  # OC, IC
-            linear_weight = linear_weight.div_(s1_scale.reshape(linear.out_features, 1))
+            linear_weight = linear_weight.div_(s1_scale.reshape(linear.out_features, 1).to(linear_weight.device))
             linear_weight = linear_weight.round_()
             # assert linear_weight.min() >= -119 and linear_weight.max() <= 119, "Stage 1: Quantized weight out of range" # 119 is the "magic" number
             assert (
@@ -183,8 +183,8 @@ class W4A8OF16LinearDynamicInputScale(torch.nn.Module):
             s2_scale = s2_scale.reshape(
                 linear.out_features, linear.in_features // group_size, 1
             )
-            linear_weight = linear_weight.div_(s2_scale.to(torch.float16)).add_(
-                s2_zero.to(torch.float16)
+            linear_weight = linear_weight.div_(s2_scale.to(torch.float16).to(linear_weight.device)).add_(
+                s2_zero.to(torch.float16).to(linear_weight.device)
             )
             assert (
                 linear_weight.min() >= 0 and linear_weight.max() <= 15
@@ -278,10 +278,10 @@ class W4A8OF16LinearDynamicInputScale(torch.nn.Module):
 
         else:  # per-channel quantization
             # Step 1: Quantize the weights to int4
-            linear_weight = linear.weight.data  # OC, IC
-            linear_weight = linear_weight.div_(s1_scale.reshape(linear.out_features, 1))
+            linear_weight = linear.weight.data.cuda()  # OC, IC
+            linear_weight = linear_weight.div_(s1_scale.reshape(linear.out_features, 1).to(linear_weight.device))
             linear_weight = linear_weight.round_().to(torch.int8)
-            linear_weight = linear_weight.add_(zeros.reshape(linear.out_features, 1))
+            linear_weight = linear_weight.add_(zeros.reshape(linear.out_features, 1).to(linear_weight.device))
 
             assert (
                 linear_weight.min() >= 0 and linear_weight.max() <= 15

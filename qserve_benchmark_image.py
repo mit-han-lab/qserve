@@ -10,6 +10,8 @@ import time
 import gc
 import torch
 
+from llava.model import *
+
 import qserve.utils.constants
 from qserve import EngineArgs, LLMEngine, SamplingParams
 from qserve.config import ProfilingConfig
@@ -77,8 +79,8 @@ def main(args: argparse.Namespace):
     """Main function that sets up and runs the prompt processing."""
 
     batch_size = int(os.environ.get("GLOBAL_BATCH_SIZE"))
-    prompt_len = 1024
-    generation_len = 512
+    prompt_len = 224 - 196 + args.img_per_seq
+    generation_len = 256
     rounds = 3
 
     with open("results.csv", "a") as file:

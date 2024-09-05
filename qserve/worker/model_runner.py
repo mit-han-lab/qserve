@@ -26,6 +26,21 @@ from qserve.modeling.models.llama_w4a8_unpad import (
 from qserve.modeling.models.llama_w8a8_unpad import (
     LlamaForCausalLM as LlamaForCausalLMW8A8,
 )
+from qserve.modeling.models.llama_w16a16_unpad import (
+    LlamaForCausalLM as LlamaForCausalLMW16A16,
+)
+from qserve.modeling.models.llava_llama_w4a8_unpad import (
+    LlavaLlamaForCausalLM as LlavaLlamaForCausalLMW4A8,
+)
+from qserve.modeling.models.vila_llama_w4a8_unpad import (
+    VilaLlamaForCausalLM as VilaLlamaForCausalLMW4A8,
+)
+from qserve.modeling.models.vila_llama_w8a8_unpad import (
+    VilaLlamaForCausalLM as VilaLlamaForCausalLMW8A8,
+)
+from qserve.modeling.models.vila_llama_w16a16_unpad import (
+    VilaLlamaForCausalLM as VilaLlamaForCausalLMW16A16,
+)
 from qserve.modeling.models.mixtral_w4a8_unpad import (
     MixtralForCausalLM as MixtralForCausalLMW4A8,
 )
@@ -35,7 +50,24 @@ from qserve.utils.input_metadata import InputMetadata
 from qserve.utils.utils import STR_DTYPE_TO_TORCH_DTYPE
 from qserve.worker.cache_engine import CacheEngine
 
+import qserve.utils.constants
+
 logger = init_logger(__name__)
+
+def tune_llava_patch_embedding(vision_tower, device):
+    # run the llava_patch_embedding layer to pre-tune the kernel configuration
+    # Without this pre-tuning, the embedding layer can cause significant slowdown due to cuDNN tuning.
+    device = vision_tower.device
+    patch_embedding = vision_tower.vision_tower.vision_model.embeddings.patch_embedding
+    patch_embedding = patch_embedding.to(device)
+    image = (
+        torch.randn((1, patch_embedding.in_channels, 336, 336))
+        .to(device)
+        .to(patch_embedding.weight.dtype)
+    )
+    for i in range(100):
+        patch_embedding(image)
+    print("Tuned llava_patch_embedding layer.")
 
 
 def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
@@ -70,12 +102,20 @@ class ModelRunner:
         kv_cache_config: Optional[Dict] = None,
         quant_path: Optional[str] = None,
         group_size: int = -1,
+        run_vlm: bool = False,
+        img_per_seq: int = 0,
+        img_rotation: bool = False,
+        img_files: str = None,
     ):
         self.model_config = model_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
         self.is_driver_worker = is_driver_worker
         self.kv_cache_config = kv_cache_config
+        self.run_vlm = run_vlm
+        self.img_per_seq = img_per_seq
+        self.img_rotation = img_rotation
+        self.img_files = img_files
 
         # model_config can be None in tests/samplers/test_sampler.py.
         # FIXME(woosuk): This is a hack to make the tests work. Refactor this.
@@ -89,7 +129,7 @@ class ModelRunner:
         # Note: Shang's important fix here. Otherwise non-GEMM part will run in FP32.
         model_type = model_config.hf_config.architectures[0]
 
-        if model_type == "LlamaForCausalLM" or model_type == "MistralForCausalLM":
+        if (model_type == "LlamaForCausalLM" or model_type == "MistralForCausalLM") and not self.run_vlm:
             if "w4a8" in precision:
                 print(f"[INFO] Using {precision} precision")
                 self.model = (
@@ -119,11 +159,25 @@ class ModelRunner:
                     .half()
                     .to(self.device)
                 )
+            elif "w16a16" in precision:
+                print(f"[INFO] Using {precision} precision")
+                self.model = (
+                    LlamaForCausalLMW16A16(
+                        self.model_config.hf_config,
+                        SamplingParams(
+                            temperature=1.0, top_p=1.0, top_k=1, max_tokens=512
+                        ),
+                        kv_cache_config=self.kv_cache_config,
+                        quant_path=quant_path,
+                    )
+                    .half()
+                    .to(self.device)
+                )
             else:
                 raise ValueError(
                     f"Unsupported model precision: {precision}. Expected w8a8 or w4a8."
                 )
-        elif model_type == "MixtralForCausalLM":
+        elif model_type == "MixtralForCausalLM" and not self.run_vlm:
             if "w4a8" in precision:
                 print(f"[INFO] Using {precision} precision")
                 self.model = (
@@ -141,6 +195,65 @@ class ModelRunner:
             else:
                 raise ValueError(
                     f"Unsupported model precision: {precision}. Expected w4a8."
+                )
+        elif (model_type == "VilaLlamaForCausalLM" or model_type == "LlamaForCausalLM") and self.run_vlm:
+            assert "kv4" not in precision, "KV4 precision is not allowed for VLM now. Please use higher precision."
+            if "w4a8" in precision:
+                raise NotImplementedError("W4A8 precision is not allowed for VLM now. Please use higher precision.")
+                print(f"[INFO] Using {precision} precision")
+                self.model = (
+                    VilaLlamaForCausalLMW4A8(
+                        self.model_config.vlm_config,
+                        group_size,
+                        SamplingParams(
+                            temperature=1.0, top_p=1.0, top_k=1, max_tokens=512
+                        ),
+                        kv_cache_config=self.kv_cache_config,
+                        quant_path=quant_path,
+                        img_rotation=self.img_rotation,
+                    )
+                    .half()
+                    .to(self.device)
+                    .eval()
+                )
+                tune_llava_patch_embedding(self.model.get_vision_tower(), device=self.device)
+            elif "w8a8" in precision:
+                print(f"[INFO] Using {precision} precision")
+                self.model = (
+                    VilaLlamaForCausalLMW8A8(
+                        self.model_config.vlm_config,
+                        SamplingParams(
+                            temperature=1.0, top_p=1.0, top_k=1, max_tokens=512
+                        ),
+                        kv_cache_config=self.kv_cache_config,
+                        quant_path=quant_path,
+                        img_rotation=self.img_rotation,
+                    )
+                    .half()
+                    .to(self.device)
+                    .eval()
+                )
+                tune_llava_patch_embedding(self.model.get_vision_tower(), device=self.device)
+            elif "w16a16" in precision:
+                print(f"[INFO] Using {precision} precision")
+                self.model = (
+                    VilaLlamaForCausalLMW16A16(
+                        self.model_config.vlm_config,
+                        SamplingParams(
+                            temperature=1.0, top_p=1.0, top_k=1, max_tokens=512
+                        ),
+                        kv_cache_config=self.kv_cache_config,
+                        quant_path=quant_path,
+                        img_rotation=self.img_rotation,
+                    )
+                    .half()
+                    .to(self.device)
+                    .eval()
+                )
+                tune_llava_patch_embedding(self.model.get_vision_tower(), device=self.device)
+            else:
+                raise ValueError(
+                    f"Unsupported model precision: {precision}. Expected w4a8, w8a8, w16a16kv8."
                 )
         else:
             raise ValueError(f"Unsupported model type: {model_type}.")
@@ -222,6 +335,7 @@ class ModelRunner:
         # kentang-mit@: let's assume that prefix is always none
         assert len(seq_group_metadata_list) > 0
         input_tokens = []
+        pil_images = []
         context_lens = []
         block_tables = []
         kv_scales_ptrs = []
@@ -236,6 +350,15 @@ class ModelRunner:
             prompt_tokens = seq_data.get_token_ids()
             input_tokens.append(prompt_tokens)
             context_len = len(prompt_tokens)
+            pil_image = seq_data.pil_image
+            if pil_image is not None:
+                pil_images.append(pil_image)
+
+            if self.run_vlm:
+                # Modify token num for img processing
+                token_per_img = qserve.utils.constants.LLAVA_DEFAULT_TOKEN_PER_IMAGE
+                context_len = context_len + self.img_per_seq * (token_per_img - 1)
+
             context_lens.append(context_len)
 
             if seq_group_metadata.block_tables is None:
@@ -286,10 +409,16 @@ class ModelRunner:
                     self.device
                 )
             )
-
+        if self.run_vlm:
+            batched_seq_len = input_tokens.size(0) + len(context_lens) * self.img_per_seq * (token_per_img - 1)
+        else:
+            batched_seq_len = input_tokens.size(0)
         padding_offsets_tensor = fused_attention.compute_padding_offsets(
-            cu_seqlens_tensor, max_prompt_len, input_tokens.size(0)
+            cu_seqlens_tensor, max_prompt_len, batched_seq_len 
         )
+        # print(padding_offsets_tensor)
+        # print(padding_offsets_tensor.shape)
+        # exit()
 
         input_metadata = InputMetadata(
             is_prompt=True,
@@ -301,8 +430,12 @@ class ModelRunner:
             block_tables=layer_block_tables,
             kv_cache_dtype=self.kv_cache_dtype,
             kv_scales=None,
-            batched_seq_len=input_tokens.size(0),
+            batched_seq_len=batched_seq_len,
             model=self.model,
+            run_vlm=self.run_vlm,
+            img_per_seq=self.img_per_seq,
+            img_files=self.img_files,
+            pil_images=pil_images,
         )
         return (input_tokens, input_metadata)
 
@@ -332,6 +465,11 @@ class ModelRunner:
                     if self.sliding_window is None
                     else min(seq_len, self.sliding_window)
                 )
+                if self.run_vlm:
+                    # Modify token num for img processing
+                    token_per_img = qserve.utils.constants.LLAVA_DEFAULT_TOKEN_PER_IMAGE
+                    context_len = context_len + self.img_per_seq * (token_per_img - 1)
+
                 context_lens.append(context_len)
 
                 block_table = seq_group_metadata.block_tables[seq_id]
@@ -400,6 +538,9 @@ class ModelRunner:
             kv_cache_dtype=self.kv_cache_dtype,
             batched_seq_len=input_tokens.size(0),
             model=self.model,
+            run_vlm=self.run_vlm,
+            img_per_seq=self.img_per_seq,
+            img_files=self.img_files,
         )
 
         return (input_tokens, input_metadata)
@@ -438,6 +579,10 @@ class ModelRunner:
             dtype=torch.int,
             device=self.device,
         )
+        if self.run_vlm:
+            # Modify token num for img processing
+            token_per_img = qserve.utils.constants.LLAVA_DEFAULT_TOKEN_PER_IMAGE
+            context_len = context_len + self.img_per_seq * (token_per_img - 1)
         max_context_len = context_len
 
         input_tokens = _make_tensor_with_pad(
@@ -455,6 +600,9 @@ class ModelRunner:
             kv_cache_dtype=self.kv_cache_dtype,
             batched_seq_len=input_tokens.size(0),
             model=self.model,
+            run_vlm=self.run_vlm,
+            img_per_seq=self.img_per_seq,
+            img_files=self.img_files,
         )
 
         return (input_tokens, input_metadata)
@@ -509,5 +657,9 @@ class ModelRunner:
         )
         model = self.model
         output = model(input_tokens, input_metadata)
-        tokens = model.sample(input_tokens, output, input_metadata)
+        
+        if self.run_vlm:
+            tokens = model.llm.sample(input_tokens, output, input_metadata)
+        else:
+            tokens = model.sample(input_tokens, output, input_metadata)
         return tokens

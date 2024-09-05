@@ -364,17 +364,17 @@ class LlamaModel(nn.Module):
         self,
         input_ids: torch.Tensor,
         input_metadata: InputMetadata,
+        inputs_embeds: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         with torch.no_grad():
-            hidden_states = self.embed_tokens(input_ids)
+            if inputs_embeds is None:    # For VLM models
+                hidden_states = self.embed_tokens(input_ids)
+            else:
+                hidden_states = inputs_embeds
             for i in range(len(self.layers)):
                 layer = self.layers[i]
-                hidden_states = layer(
-                    hidden_states,
-                    input_metadata,
-                )
+                hidden_states = layer(hidden_states, input_metadata)
             hidden_states = self.norm(hidden_states)
-
         return hidden_states
 
 
@@ -430,10 +430,16 @@ class LlamaForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         input_metadata: InputMetadata,
+        inputs_embeds: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        hidden_states = self.model(input_ids, input_metadata)
-        output = self.lm_head(hidden_states)  # only compute last logits
-        return output.float()
+        hidden_states = self.model(input_ids, input_metadata, inputs_embeds)
+        if input_metadata.is_prompt:
+            output = self.lm_head(
+                hidden_states[input_metadata.cu_seqlens[1:] - 1, :]
+            )  # only compute last logits
+        else:
+            output = self.lm_head(hidden_states)
+        return output  # .float()
 
     def sample(
         self,

@@ -64,7 +64,7 @@ class Sampler(nn.Module):
         input_metadata: InputMetadata,
     ) -> torch.Tensor:
         output_ids = input_ids.clone()
-        if 0:  # self.logits_processor:
+        if self.logits_processor:
             if self.sampling_params.repetition_penalty > 1.0:
                 # tmp_output_ids = torch.as_tensor([output_ids], device=logits.device)
                 tmp_output_ids = output_ids
@@ -84,10 +84,10 @@ class Sampler(nn.Module):
             else:
                 last_token_logits = logits
         if (
-            1
-        ):  # self.sampling_params.temperature < 1e-5 or self.sampling_params.top_p < 1e-8:  # greedy
+            self.sampling_params.temperature < 1e-5 or self.sampling_params.top_p < 1e-8  # greedy
+        ):
             token = torch.argmax(last_token_logits, dim=-1)
         else:
             probs = torch.softmax(last_token_logits, dim=-1)
-            token = torch.multinomial(probs, num_samples=1)
+            token = torch.multinomial(probs, num_samples=1).view(-1)
         return token
