@@ -16,7 +16,7 @@ Quantization can accelerate large language model (LLM) inference. Going beyond I
 
 **The current release supports:**
 
-- Blazingly fast system support for **QoQ W4A8KV4** quantization (Algorithim release: [LMQuant](https://github.com/mit-han-lab/lmquant));
+- Blazingly fast system support for **QoQ W4A8KV4** quantization (Algorithm release: [LMQuant](https://github.com/mit-han-lab/lmquant));
 - Pre-quantized QServe model zoo with **W4A8KV4 QoQ** for mainstream LLMs;
 - **Fully PyTorch-based** runtime and user interface for LLM serving, with **TensorRT-LLM-level efficiency** and **PyTorch-level flexibility**;
 - Full support for **in-flight batching** and **paged attention**;
