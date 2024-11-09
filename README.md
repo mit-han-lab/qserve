@@ -1,6 +1,6 @@
 # QServe: ***W4A8KV4*** Quantization and System Co-design for Efficient LLM Serving
 
-[[Paper](https://arxiv.org/abs/2405.04532)] [[DeepCompressor Library](https://github.com/mit-han-lab/deepcompressor)] [[Website](https://hanlab.mit.edu/projects/qserve)]
+[[Paper](https://arxiv.org/abs/2405.04532)] [[DeepCompressor Library](https://github.com/mit-han-lab/deepcompressor/tree/lmquant-v0.0.0-deprecated)] [[Website](https://hanlab.mit.edu/projects/qserve)]
 
 **QServe: Efficient and accurate LLM serving system** on GPUs with W4A8KV4 quantization (4-bit weights, 8-bit activations, and 4-bit KV cache). Compared with leading industry solution TensorRT-LLM, QServe achieves **1.2x-1.4x higher throughput** when serving Llama-3-8B, and **2.4x-3.5x higher throughput** when serving Qwen1.5-72B, on L40S and A100 GPUs. QServe also allows users to achieve A100-level throughput on **3x cheaper** L40S GPUs.  
 
@@ -16,7 +16,7 @@ Quantization can accelerate large language model (LLM) inference. Going beyond I
 
 **The current release supports:**
 
-- Blazingly fast system support for **QoQ W4A8KV4** quantization (Algorithim release: [DeepCompressor](https://github.com/mit-han-lab/deepcompressor));
+- Blazingly fast system support for **QoQ W4A8KV4** quantization (Algorithim release: [DeepCompressor Library](https://github.com/mit-han-lab/deepcompressor/tree/lmquant-v0.0.0-deprecated));
 - Pre-quantized QServe model zoo with **W4A8KV4 QoQ** for mainstream LLMs;
 - **Fully PyTorch-based** runtime and user interface for LLM serving, with **TensorRT-LLM-level efficiency** and **PyTorch-level flexibility**;
 - Full support for **in-flight batching** and **paged attention**;
@@ -144,7 +144,7 @@ For other models, please refer to the detailed support list for the links to dow
 
 For flagship datacenter GPUs such as the A100, it is recommended to use QServe-per-channel, while for inference datacenter GPUs like the L40S, QServe-per-group is the recommended approach.
 
-If you are interested in generating the quantized checkpoints on your own, please follow the instructions in [DeepCompressor](https://github.com/mit-han-lab/deepcompressor) to run QoQ quantization and dump the fake-quantized models. We then provide checkpoint converter to real-quantize and pack the model into QServe format:
+If you are interested in generating the quantized checkpoints on your own, please follow the instructions in [DeepCompressor Library](https://github.com/mit-han-lab/deepcompressor/tree/lmquant-v0.0.0-deprecated) to run QoQ quantization and dump the fake-quantized models. We then provide checkpoint converter to real-quantize and pack the model into QServe format:
 
 ```bash
 python checkpoint_converter.py --model-path <hf-model-path> --quant-path <fake-quant-model-path> --group-size -1 --device cpu
@@ -420,7 +420,7 @@ The following projects are highly related to QServe. Our group has developed ful
 
 You are also welcome to check out [MIT HAN LAB](https://hanlab.mit.edu) for other exciting projects on **Efficient Generative AI**!
 
-- [**Algorithm**] [DeepCompressor: Model Compression for Large Language Models and Diffusion Models](https://github.com/mit-han-lab/deepcompressor)
+- [**Algorithm**] [DeepCompressor: Model Compression for Large Language Models and Diffusion Models](https://github.com/mit-han-lab/deepcompressor/tree/lmquant-v0.0.0-deprecated)
 
 - [**Algorithm**] [AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration](https://github.com/mit-han-lab/llm-awq)
 
