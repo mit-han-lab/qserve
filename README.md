@@ -370,7 +370,7 @@ We recommend direcly setting the `NUM_GPU_PAGE_BLOCKS` environmental variable to
 
 ### Accuracy Evaluation
 
-QServe also maintains high accuracy thanks to the QoQ algorithm provided in our [DeepCompressor](https://github.com/mit-han-lab/deepcompressor) quantization library.
+QServe also maintains high accuracy thanks to the QoQ algorithm provided in our [DeepCompressor](https://github.com/mit-han-lab/deepcompressor/tree/lmquant-v0.0.0-deprecated) quantization library.
 
 Below is the WikiText2 perplexity evaluated with 2048 sequence length. The lower is the better.
 
