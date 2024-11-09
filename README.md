@@ -1,6 +1,6 @@
 # QServe: ***W4A8KV4*** Quantization and System Co-design for Efficient LLM Serving
 
-[[Paper](https://arxiv.org/abs/2405.04532)] [[DeepCompressor Quantization Algorithm Library](https://github.com/mit-han-lab/deepcompressor)] [[Website](https://hanlab.mit.edu/projects/qserve)]
+[[Paper](https://arxiv.org/abs/2405.04532)] [[DeepCompressor Library](https://github.com/mit-han-lab/deepcompressor)] [[Website](https://hanlab.mit.edu/projects/qserve)]
 
 **QServe: Efficient and accurate LLM serving system** on GPUs with W4A8KV4 quantization (4-bit weights, 8-bit activations, and 4-bit KV cache). Compared with leading industry solution TensorRT-LLM, QServe achieves **1.2x-1.4x higher throughput** when serving Llama-3-8B, and **2.4x-3.5x higher throughput** when serving Qwen1.5-72B, on L40S and A100 GPUs. QServe also allows users to achieve A100-level throughput on **3x cheaper** L40S GPUs.  
 
