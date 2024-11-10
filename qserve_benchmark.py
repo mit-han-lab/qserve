@@ -32,7 +32,7 @@ def process_requests(
             str(b),
             prompt=None,
             profiling_config=profiling_config,
-            sampling_params=SamplingParams(top_p=0.95, top_k=40, temperature=0.7),
+            sampling_params=SamplingParams(temperature=0.0),
         )
 
     if engine.ifb_mode == False:
