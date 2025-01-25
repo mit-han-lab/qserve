@@ -29,18 +29,21 @@ from qserve.modeling.models.llama_w8a8_unpad import (
 from qserve.modeling.models.llama_w16a16_unpad import (
     LlamaForCausalLM as LlamaForCausalLMW16A16,
 )
-from qserve.modeling.models.llava_llama_w4a8_unpad import (
-    LlavaLlamaForCausalLM as LlavaLlamaForCausalLMW4A8,
-)
-from qserve.modeling.models.vila_llama_w4a8_unpad import (
-    VilaLlamaForCausalLM as VilaLlamaForCausalLMW4A8,
-)
-from qserve.modeling.models.vila_llama_w8a8_unpad import (
-    VilaLlamaForCausalLM as VilaLlamaForCausalLMW8A8,
-)
-from qserve.modeling.models.vila_llama_w16a16_unpad import (
-    VilaLlamaForCausalLM as VilaLlamaForCausalLMW16A16,
-)
+try:
+    from qserve.modeling.models.llava_llama_w4a8_unpad import (
+        LlavaLlamaForCausalLM as LlavaLlamaForCausalLMW4A8,
+    )
+    from qserve.modeling.models.vila_llama_w4a8_unpad import (
+        VilaLlamaForCausalLM as VilaLlamaForCausalLMW4A8,
+    )
+    from qserve.modeling.models.vila_llama_w8a8_unpad import (
+        VilaLlamaForCausalLM as VilaLlamaForCausalLMW8A8,
+    )
+    from qserve.modeling.models.vila_llama_w16a16_unpad import (
+        VilaLlamaForCausalLM as VilaLlamaForCausalLMW16A16,
+    )
+except ImportError:
+    print("[Warning] LLAVA and VILA models are not available.")
 from qserve.modeling.models.mixtral_w4a8_unpad import (
     MixtralForCausalLM as MixtralForCausalLMW4A8,
 )
