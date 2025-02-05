@@ -14,9 +14,24 @@ void rms_norm(torch::Tensor &out,    // [num_tokens, hidden_size]
               torch::Tensor &weight, // [hidden_size]
               float epsilon, bool use_quant);
 
+void layer_norm_general(torch::Tensor &out,    // [..., hidden_size]
+              torch::Tensor &input,  // [..., hidden_size]
+              torch::Tensor &weight, // [hidden_size]
+              torch::Tensor &scaling, // [tokens] or [1]
+              float epsilon,
+              bool use_per_token_quant);
+
 void rms_norm_general(torch::Tensor &out,    // [..., hidden_size]
               torch::Tensor &input,  // [..., hidden_size]
               torch::Tensor &weight, // [hidden_size]
+              torch::Tensor &scaling, // [tokens] or [1]
+              float epsilon,
+              bool use_per_token_quant);
+
+void layer_norm_general_fuse_sum(torch::Tensor &out,    // [..., hidden_size]
+              torch::Tensor &input,  // [..., hidden_size]
+              torch::Tensor &weight, // [hidden_size]
+              torch::Tensor &input_sum, // [tokens] or [1]
               torch::Tensor &scaling, // [tokens] or [1]
               float epsilon,
               bool use_per_token_quant);
@@ -49,9 +64,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         py::arg("weight"), py::arg("epsilon"), py::arg("use_quant") = false,
         "Apply Root Mean Square (RMS) Normalization to the input tensor.");
 
+  m.def("layer_norm_general", &layer_norm_general, py::arg("out"), py::arg("input"),
+        py::arg("weight"), py::arg("scaling"), py::arg("epsilon"), py::arg("use_per_token_quant") = false,
+        "Apply Layer Normalization to the input tensor (modified from TRTLLM kernel).");
+
   m.def("rms_norm_general", &rms_norm_general, py::arg("out"), py::arg("input"),
         py::arg("weight"), py::arg("scaling"), py::arg("epsilon"), py::arg("use_per_token_quant") = false,
         "Apply Root Mean Square (RMS) Normalization to the input tensor (TRTLLM kernel).");
+
+  m.def("layer_norm_general_fuse_sum", &layer_norm_general_fuse_sum, py::arg("out"), py::arg("input"),
+        py::arg("weight"), py::arg("input_sum"), py::arg("scaling"), py::arg("epsilon"), py::arg("use_per_token_quant") = false,
+        "Apply Layer Normalization to the input tensor & get input sum (modified from TRTLLM kernel).");
 
   m.def("rms_norm_general_fuse_sum", &rms_norm_general_fuse_sum, py::arg("out"), py::arg("input"),
         py::arg("weight"), py::arg("input_sum"), py::arg("scaling"), py::arg("epsilon"), py::arg("use_per_token_quant") = false,
